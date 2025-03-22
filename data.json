@@ -7,26 +7,54 @@
         "account.e5179c040b2b477ca6d3229bc4d9457f:ea812b43-93f0-4a60-81f3-081cc1b1493d": true,
         "account.02db68626b4746e08f195827525875b8:a2ef62cc-f688-4fbb-a7af-afab914f545d": true,
         "account.19ba63212d2b4a8b9daec47a7c75dd33:10cd9af9-e4d7-40f2-9dce-c913d2524ff7": true,
-        "account.4977da6f187141f18d3dc977b64cdc6d:6c0da4b1-7875-4303-972b-22bac2f032be": true
+        "account.4977da6f187141f18d3dc977b64cdc6d:6c0da4b1-7875-4303-972b-22bac2f032be": true,
+        "account.77ff807fe4814838a0636223d2f98e29:abf0a82f-eb16-4b15-904c-d92510394376": true,
+        "account.5a3e381e01884280bfdaf75a8a2e0117:ca90ff27-9210-436f-bbe5-34016283f259": true,
+        "account.b52df09f4c30483cab49d775a2497adf:b44c89c7-a0e1-48de-855f-f2b3d25857ec": true,
+        "account.fbbedeaff6a94ad9ac55e7992c300111:0cf183e7-c31a-4ba7-9cc0-61ff7965eb75": true,
+        "account.e5179c040b2b477ca6d3229bc4d9457f:c29f9ddc-035c-4983-a4d7-80360041cf8e": true,
+        "account.02db68626b4746e08f195827525875b8:ec9764ed-86cb-460a-9abb-ae1dc317b512": true,
+        "account.19ba63212d2b4a8b9daec47a7c75dd33:0740f077-ddf6-41b0-92c2-170c4ac1f74f": true,
+        "account.4977da6f187141f18d3dc977b64cdc6d:abf0a82f-eb16-4b15-904c-d92510394376": true
     },
     "damage": {
+        "Dennyso01": 4115,
+        "FutoZaurus": 0,
+        "AdolfRizzler696": 1849,
+        "bularo": 3113,
+        "monketv": 15804,
+        "Moticel": 1881,
+        "leggacys": 607,
+        "dany77777": 3400
+    },
+    "scores": {
+        "AdolfRizzler696": 2,
+        "bularo": 2,
+        "monketv": 5,
+        "FutoZaurus": 2,
+        "Moticel": 1,
+        "leggacys": 1,
+        "Dennyso01": 2,
+        "dany77777": 1
+    },
+    "playerIds": {
+        "Dennyso01": "account.77ff807fe4814838a0636223d2f98e29",
+        "FutoZaurus": "account.5a3e381e01884280bfdaf75a8a2e0117",
+        "AdolfRizzler696": "account.b52df09f4c30483cab49d775a2497adf",
+        "bularo": "account.fbbedeaff6a94ad9ac55e7992c300111",
+        "monketv": "account.e5179c040b2b477ca6d3229bc4d9457f",
+        "Moticel": "account.02db68626b4746e08f195827525875b8",
+        "leggacys": "account.19ba63212d2b4a8b9daec47a7c75dd33",
+        "dany77777": "account.4977da6f187141f18d3dc977b64cdc6d"
+    },
+    "kills": {
         "Dennyso01": 0,
         "FutoZaurus": 0,
         "AdolfRizzler696": 0,
-        "bularo": 0,
-        "monketv": 0,
-        "Moticel": 0,
-        "leggacys": 0,
-        "dany77777": 0
-    },
-    "scores": {
-        "AdolfRizzler696": 1,
         "bularo": 1,
-        "monketv": 4,
-        "FutoZaurus": 1,
-        "Moticel": 1,
+        "monketv": 2,
+        "Moticel": 0,
         "leggacys": 1,
-        "Dennyso01": 1,
         "dany77777": 1
     }
 }
