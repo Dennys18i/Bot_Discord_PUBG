@@ -7,7 +7,8 @@ import asyncio
 
 TOKEN = 'MTMzMzUwNjg5MDA3OTkzMjQ2OA.Gw7mw6.B3IV_iybP_AsZfmIMjrQkVJ0U-1x7JD-zu92Dc'
 PUBG_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI1YzhhYTY3MC1lMDBkLTAxM2QtNTcyZC03ZWRkNmY0MTRiOTUiLCJpc3MiOiJnYW1lbG9ja2VyIiwiaWF0IjoxNzQxNjMyMTU3LCJwdWIiOiJibHVlaG9sZSIsInRpdGxlIjoicHViZyIsImFwcCI6InRyYWNrLXB1Ymctd2luIn0.U1RvNG0Kuh26_3JMa0MTkpdfce9Dk4UkzmKDfRVhEhI"
-CHANNEL_ID = 1329872665787240541
+#CHANNEL_ID = 1329872665787240541
+CHANNEL_ID = 1348732364372709468
 
 PLATFORM = "steam" 
 USERNAMES = ["Dennyso01", "FutoZaurus", "AdolfRizzler696", "bularo", "monketv", "Moticel", "leggacys", "dany77777"]
@@ -40,6 +41,8 @@ damage_data = data.get("damage", {})
 scores_data = data.get("scores", {})
 kills_data = data.get("kills", {})
 player_ids = data.get("playerIds", {})
+player_match_count_data = data.get("player_match_count", {})
+longest_kill_data = data.get("longestKill", {})
 
 def get_player_ids():
     headers = {"Authorization": f"Bearer {PUBG_API_KEY}", "Accept": "application/vnd.api+json"}
@@ -79,6 +82,30 @@ def get_last_match(player_id):
     
     return None
 
+async def save_longest_kill(username, distance):
+
+    global_record = data.get("globalLongestKill", {"username": None, "distance": 0})
+    previous_record = global_record["distance"]
+    channel = bot.get_channel(CHANNEL_ID)
+
+    if username in longest_kill_data:
+        if distance > longest_kill_data[username]:
+            longest_kill_data[username] = distance
+            data["longestKill"] = longest_kill_data
+            save_data(data)
+            print(f"Recordul pentru {username} a fost doborât! Noua distanță: {distance} metri.")
+    else:
+        longest_kill_data[username] = distance
+        data["longestKill"] = longest_kill_data
+        save_data(data)
+
+    if distance > previous_record:
+        data["globalLongestKill"] = {"username": username, "distance": distance}
+        save_data(data)
+        await channel.send(f"🎯 **NOU RECORD!** 🎯\n{username} a reușit un kill de la **{distance} metri**! 🚀🥇")
+        print(f"NOU RECORD GLOBAL: {username} - {distance} metri!")
+
+
 def get_player_info(player_id):
     last_match_id = get_last_match(player_id)
     if not last_match_id:
@@ -96,9 +123,11 @@ def get_player_info(player_id):
         match_data = response.json()
 
         game_mode = match_data["data"]["attributes"]["gameMode"]
+        match_type = match_data["data"]["attributes"].get("matchType", "")
+        
         print(f"Meci ID: {last_match_id} - Game Mode: {game_mode}")
 
-        if game_mode in ["arcade", "lab", "war", "bluebomb", "esportsmode", "gunplay_ibr"]:
+        if game_mode in ["arcade", "lab", "war", "bluebomb", "esportsmode", "gunplay_ibr", "ibr", "tdm"] or match_type == "custom":
             print(f"Meciul {last_match_id} este {game_mode} și NU va fi luat în considerare.")
             return None
         
@@ -107,6 +136,13 @@ def get_player_info(player_id):
             processed_matches[f"{player_id}:{last_match_id}"] = True
             data["processedMatches"] = processed_matches
             save_data(data)
+
+
+            if "longestKill" in filtered_player["attributes"]["stats"]:
+                distance = filtered_player["attributes"]["stats"]["longestKill"]
+                bot.loop.create_task(save_longest_kill(filtered_player["attributes"]["stats"]["name"], distance))    
+
+            
             return filtered_player["attributes"]["stats"]
 
     return None
@@ -123,6 +159,8 @@ async def check_for_wins():
         print("Canalul nu a fost găsit.")
         return
     
+        
+    
     for username, player_id in player_ids.items():
         stats = get_player_info(player_id)
 
@@ -133,6 +171,7 @@ async def check_for_wins():
         win_place = stats["winPlace"]
         damage = stats["damageDealt"]
         kills = stats["kills"]
+        longest_kill = stats["longestKill"]
 
         if win_place == 1:
             scores_data[username] = scores_data.get(username, 0) + 1
@@ -140,17 +179,25 @@ async def check_for_wins():
             save_data(data)
 
             await channel.send(f"@everyone 🏆 {username} a câștigat un meci! Felicitări! 🎉")
+            print(f"{username} a terminat pe locul {win_place}.")
         elif win_place is not None:
             print(f"{username} a terminat pe locul {win_place}.")
 
+
+        
         damage_data[username] = int(damage_data.get(username, 0) + damage)
         kills_data[username] = int(kills_data.get(username, 0) + kills)
+        player_match_count_data[username] = int(player_match_count_data.get(username, 0) + 1)
+
+
         data["damage"] = damage_data
         data["kills"] = kills_data
+        data["player_match_count"] = player_match_count_data
         save_data(data)
 
         await asyncio.sleep(sleep_time)
 
+  
 
 @bot.command()
 async def leaderboard(ctx):
@@ -174,12 +221,18 @@ async def leaderboard_damage(ctx):
         await ctx.send("Nu exista damage inregistrat!")
         return
     
-    sorted_damages = sorted(damage_data.items(), key=lambda x: x[1], reverse=True)
+    damage_per_match = {}
+    for username, damage in damage_data.items():
+        match_count = player_match_count_data.get(username, 1)  # Default la 1 dacă nu există date
+        damage_per_match[username] = damage / match_count
+
+    sorted_damages = sorted(damage_per_match.items(), key=lambda x: x[1], reverse=True)
     
     leaderboard_text = "🏆 **Leaderboard PUBG Damages** 🏆\n"
     
     for rank, (username, damage) in enumerate(sorted_damages, start=1):
-        leaderboard_text += f"{rank}. {username}: {damage} damage\n"
+        match_count = player_match_count_data.get(username, 1)
+        leaderboard_text += f"{rank}. {username}: {damage:.2f} damage\n"
     
     await ctx.send(leaderboard_text)
 
@@ -195,6 +248,22 @@ async def leaderboard_kills(ctx):
     
     for rank, (username, kills) in enumerate(sorted_kills, start=1):
         leaderboard_text += f"{rank}. {username}: {kills} {'kill' if kills == 1 else 'kills'}\n"
+    
+    await ctx.send(leaderboard_text)
+
+
+@bot.command()
+async def leaderboard_sniper(ctx):
+    if not longest_kill_data:
+        await ctx.send("Nu există încă longest kill-uri înregistrate.")
+        return
+    
+    sorted_snipers = sorted(longest_kill_data.items(), key=lambda x: x[1], reverse=True)
+    
+    leaderboard_text = "🏆 **Leaderboard SniperMan** 🏆\n"
+    
+    for rank, (username, distance) in enumerate(sorted_snipers, start=1):
+        leaderboard_text += f"{rank}. {username}: {distance} metri\n"
     
     await ctx.send(leaderboard_text)
 
