@@ -1,0 +1,10 @@
+TOKEN = 'MTMzMzUwNjg5MDA3OTkzMjQ2OA.Gw7mw6.B3IV_iybP_AsZfmIMjrQkVJ0U-1x7JD-zu92Dc'
+PUBG_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI1YzhhYTY3MC1lMDBkLTAxM2QtNTcyZC03ZWRkNmY0MTRiOTUiLCJpc3MiOiJnYW1lbG9ja2VyIiwiaWF0IjoxNzQxNjMyMTU3LCJwdWIiOiJibHVlaG9sZSIsInRpdGxlIjoicHViZyIsImFwcCI6InRyYWNrLXB1Ymctd2luIn0.U1RvNG0Kuh26_3JMa0MTkpdfce9Dk4UkzmKDfRVhEhI"
+CHANNEL_ID = 1329872665787240541
+
+DATA_FILE = "data/data.json"
+
+PLATFORM = "steam" 
+USERNAMES = ["Dennyso01", "FutoZaurus", "AdolfRizzler696", "bularo", "monketv", "Moticel", "leggacys", "dany77777"]
+
+SLEEP_TIME = 30
