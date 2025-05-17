@@ -1,171 +1,140 @@
 import discord
 from discord.ext import commands, tasks
 import requests
-import json
-import os
 import asyncio
+from pymongo import MongoClient
+from dotenv import load_dotenv
+import os
+import certifi
+import time
 
-TOKEN = 'MTMzMzUwNjg5MDA3OTkzMjQ2OA.Gw7mw6.B3IV_iybP_AsZfmIMjrQkVJ0U-1x7JD-zu92Dc'
-PUBG_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJqdGkiOiI1YzhhYTY3MC1lMDBkLTAxM2QtNTcyZC03ZWRkNmY0MTRiOTUiLCJpc3MiOiJnYW1lbG9ja2VyIiwiaWF0IjoxNzQxNjMyMTU3LCJwdWIiOiJibHVlaG9sZSIsInRpdGxlIjoicHViZyIsImFwcCI6InRyYWNrLXB1Ymctd2luIn0.U1RvNG0Kuh26_3JMa0MTkpdfce9Dk4UkzmKDfRVhEhI"
-#CHANNEL_ID = 1329872665787240541
-CHANNEL_ID = 1348732364372709468
+# Load .env variables
+load_dotenv()
+MONGO_URI = os.getenv("MONGO_URI")
+TOKEN = os.getenv("TOKEN")
+PUBG_API_KEY = os.getenv("PUBG_API_KEY").strip()
 
-PLATFORM = "steam" 
-USERNAMES = ["Dennyso01", "FutoZaurus", "AdolfRizzler696", "bularo", "monketv", "Moticel", "leggacys", "dany77777"]
-
+# CONFIG
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", 1329872665787240541))  # fallback la default
+PLATFORM = "steam"
 sleep_time = 30
 
+# Discord intents
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-DATA_FILE = "data.json"
+# MongoDB setup
+try:
+    client = MongoClient(MONGO_URI, tlsCAFile=certifi.where())
+    db = client["pubg_bot"]
+    players_col = db["players"]
+    matches_col = db["processedMatches"]
+    global_col = db["globalStats"]
+    print("✅ Connected to MongoDB!")
+except Exception as e:
+    print(f"❌ Error connecting with MongoDB: {e}")
+    raise
 
-def load_data():
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            print("Eroare la citirea damage.json, inițializăm un nou dicționar.")
-            return {}
-    return {}
-
-def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4)
-
-data = load_data()
-processed_matches = data.get("processedMatches", {})
-damage_data = data.get("damage", {})
-scores_data = data.get("scores", {})
-kills_data = data.get("kills", {})
-player_ids = data.get("playerIds", {})
-player_match_count_data = data.get("player_match_count", {})
-longest_kill_data = data.get("longestKill", {})
-
-def get_player_ids():
-    headers = {"Authorization": f"Bearer {PUBG_API_KEY}", "Accept": "application/vnd.api+json"}
-    for username in USERNAMES:
-        if username in player_ids:
-            continue
-        url = f"https://api.pubg.com/shards/{PLATFORM}/players?filter[playerNames]={username}"
+async def safe_request(url, headers, max_retries=3, base_delay=5):
+    for attempt in range(max_retries):
         response = requests.get(url, headers=headers)
-        if response.status_code == 200 and response.json()["data"]:
-            player_ids[username] = response.json()["data"][0]["id"]
+        if response.status_code != 429:
+            return response
+        delay = base_delay * (2 ** attempt)
+        print(f"⚠️ Rate limit 429 – test {attempt + 1}/{max_retries}, we are waiting {delay}s...")
+        await asyncio.sleep(delay)
+    return response
 
-    if player_ids != data.get("playerIds", {}):
-        data["playerIds"] = player_ids
-        save_data(data)
-    return player_ids
+async def get_player_ids():
+    headers = {"Authorization": f"Bearer {PUBG_API_KEY}", "Accept": "application/vnd.api+json"}
+    for player in players_col.find():
+        if player.get("accountId"):
+            continue
+        url = f"https://api.pubg.com/shards/{PLATFORM}/players?filter[playerNames]={player['username']}"
+        response = await safe_request(url, headers)
+        if response.status_code == 200 and response.json()["data"]:
+            account_id = response.json()["data"][0]["id"]
+            players_col.update_one({"username": player["username"]}, {"$set": {"accountId": account_id}})
+
+async def get_last_match(player_id):
+    url = f"https://api.pubg.com/shards/{PLATFORM}/players/{player_id}"
+    headers = {"Authorization": f"Bearer {PUBG_API_KEY}", "Accept": "application/vnd.api+json"}
+    response = await safe_request(url, headers)
+    if response.status_code == 200:
+        matches = response.json()["data"]["relationships"]["matches"]["data"]
+        if matches:
+            return matches[0]["id"]
+    return None
 
 def filter_by_id(players, player_id):
     for player in players:
-        if "type" in player and player["type"] == "participant" and player["attributes"]["stats"]["playerId"] == player_id:
+        if player.get("type") == "participant" and player["attributes"]["stats"]["playerId"] == player_id:
             return player
     return None
 
-def get_last_match(player_id):
-    url = f"https://api.pubg.com/shards/{PLATFORM}/players/{player_id}"
-    headers = {"Authorization": f"Bearer {PUBG_API_KEY}", "Accept": "application/vnd.api+json"}
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code == 200:
-        
-        
-        matches = response.json()["data"]["relationships"]["matches"]["data"]
-        
-        if matches:
-            last_match_id = matches[0]["id"]
-            print(f"Ultimul meci al jucătorului {player_id}: {last_match_id}")
-            return last_match_id
-    
-    return None
-
 async def save_longest_kill(username, distance):
-
-    global_record = data.get("globalLongestKill", {"username": None, "distance": 0})
-    previous_record = global_record["distance"]
     channel = bot.get_channel(CHANNEL_ID)
+    player = players_col.find_one({"username": username})
+    if not player:
+        return
 
-    if username in longest_kill_data:
-        if distance > longest_kill_data[username]:
-            longest_kill_data[username] = distance
-            data["longestKill"] = longest_kill_data
-            save_data(data)
-            print(f"Recordul pentru {username} a fost doborât! Noua distanță: {distance} metri.")
-    else:
-        longest_kill_data[username] = distance
-        data["longestKill"] = longest_kill_data
-        save_data(data)
+    if distance > player.get("longestKill", 0):
+        players_col.update_one({"username": username}, {"$set": {"longestKill": distance}})
 
-    if distance > previous_record:
-        data["globalLongestKill"] = {"username": username, "distance": distance}
-        save_data(data)
+    global_record = global_col.find_one({"_id": "globalLongestKill"}) or {"distance": 0}
+    if distance > global_record["distance"]:
+        global_col.replace_one(
+            {"_id": "globalLongestKill"},
+            {"_id": "globalLongestKill", "username": username, "distance": distance},
+            upsert=True
+        )
         await channel.send(f"🎯 **NOU RECORD!** 🎯\n{username} a reușit un kill de la **{distance} metri**! 🚀🥇")
-        print(f"NOU RECORD GLOBAL: {username} - {distance} metri!")
 
-
-def get_player_info(player_id):
-    last_match_id = get_last_match(player_id)
+async def get_player_info(player_id):
+    last_match_id = await get_last_match(player_id)
     if not last_match_id:
         return None
 
-    if f"{player_id}:{last_match_id}" in processed_matches:
-        print(f"Meciul {last_match_id} al jucătorului {player_id} a fost deja procesat. Se sare la următorul.")
+    match_key = f"{player_id}:{last_match_id}"
+    if matches_col.find_one({"matchId": match_key}):
         return None
-    
+
     url = f"https://api.pubg.com/shards/{PLATFORM}/matches/{last_match_id}"
     headers = {"Authorization": f"Bearer {PUBG_API_KEY}", "Accept": "application/vnd.api+json"}
-    response = requests.get(url, headers=headers)
-    
+    response = await safe_request(url, headers)
     if response.status_code == 200:
         match_data = response.json()
-
         game_mode = match_data["data"]["attributes"]["gameMode"]
         match_type = match_data["data"]["attributes"].get("matchType", "")
-        
-        print(f"Meci ID: {last_match_id} - Game Mode: {game_mode}")
 
-        if game_mode in ["arcade", "lab", "war", "bluebomb", "esportsmode", "gunplay_ibr", "ibr", "tdm"] or match_type == "custom":
-            print(f"Meciul {last_match_id} este {game_mode} și NU va fi luat în considerare.")
+        print(f"Mod detectat pentru {player_id}: gameMode = {game_mode}, matchType = {match_type}")
+
+        if game_mode in ["arcade", "lab", "war", "bluebomb", "esportsmode", "gunplay_ibr", "ibr", "tdm", "tutorialatoz"] or match_type in ["custom", "tutorialatoz"]:
             return None
-        
-        filtered_player= filter_by_id(match_data["included"], player_id)
+
+        filtered_player = filter_by_id(match_data["included"], player_id)
         if filtered_player and "winPlace" in filtered_player["attributes"]["stats"]:
-            processed_matches[f"{player_id}:{last_match_id}"] = True
-            data["processedMatches"] = processed_matches
-            save_data(data)
-
-
-            if "longestKill" in filtered_player["attributes"]["stats"]:
-                distance = filtered_player["attributes"]["stats"]["longestKill"]
-                bot.loop.create_task(save_longest_kill(filtered_player["attributes"]["stats"]["name"], distance))    
-
-            
+            matches_col.insert_one({"matchId": match_key, "processed": True})
             return filtered_player["attributes"]["stats"]
-
     return None
 
 @tasks.loop(minutes=5)
 async def check_for_wins():
-    player_ids = get_player_ids()
-    if not player_ids:
-        print("Nu s-au putut obține ID-urile jucătorilor.")
-        return
-    
+    await get_player_ids()
     channel = bot.get_channel(CHANNEL_ID)
     if not channel:
-        print("Canalul nu a fost găsit.")
         return
-    
-        
-    
-    for username, player_id in player_ids.items():
-        stats = get_player_info(player_id)
 
+    for player in players_col.find():
+        username = player["username"]
+        player_id = player.get("accountId")
+        if not player_id:
+            continue
+
+        stats = await get_player_info(player_id)
         if not stats:
-            print(f"Nu s-au putut obține informațiile sau meciul a fost deja procesat pentru jucătorul {username}.")
+            print(f"⏭️ Match for {username} skipped (already processed or invalid)")
             continue
 
         win_place = stats["winPlace"]
@@ -173,104 +142,134 @@ async def check_for_wins():
         kills = stats["kills"]
         longest_kill = stats["longestKill"]
 
+        update_data = {
+            "$inc": {
+                "damage": int(damage),
+                "kills": int(kills),
+                "matchCount": 1,
+                "score": 1 if win_place == 1 else 0
+            }
+        }
+        players_col.update_one({"username": username}, update_data)
+        bot.loop.create_task(save_longest_kill(username, longest_kill))
+
         if win_place == 1:
-            scores_data[username] = scores_data.get(username, 0) + 1
-            data["scores"] = scores_data
-            save_data(data)
+            await channel.send(f"@everyone 🏆 {username} has won a match! Congratulations! 🎉")
 
-            await channel.send(f"@everyone 🏆 {username} a câștigat un meci! Felicitări! 🎉")
-            print(f"{username} a terminat pe locul {win_place}.")
-        elif win_place is not None:
-            print(f"{username} a terminat pe locul {win_place}.")
-
-
-        
-        damage_data[username] = int(damage_data.get(username, 0) + damage)
-        kills_data[username] = int(kills_data.get(username, 0) + kills)
-        player_match_count_data[username] = int(player_match_count_data.get(username, 0) + 1)
-
-
-        data["damage"] = damage_data
-        data["kills"] = kills_data
-        data["player_match_count"] = player_match_count_data
-        save_data(data)
-
+        print(f"📊 {username} finished on the spot {win_place}, {kills} kills, {damage} damage")
         await asyncio.sleep(sleep_time)
-
-  
 
 @bot.command()
 async def leaderboard(ctx):
-    if not scores_data:
-        await ctx.send("Nu există încă win-uri înregistrate.")
-        return
-    
-    sorted_scores = sorted(scores_data.items(), key=lambda x: x[1], reverse=True)
-    
-    leaderboard_text = "🏆 **Leaderboard PUBG Wins** 🏆\n"
-    
-    for rank, (username, wins) in enumerate(sorted_scores, start=1):
-        leaderboard_text += f"{rank}. {username}: {wins} victori{'i' if wins > 1 else 'e'}\n"
-    
-    await ctx.send(leaderboard_text)
+    guild_id = ctx.guild.id
+    top = list(players_col.find({"guild_id": guild_id}).sort("score", -1).limit(10))
 
+    if not top:
+        await ctx.send("There is no data")
+        return
+
+    msg = "🏆 **Leaderboard PUBG Wins** 🏆\n"
+    for i, p in enumerate(top, start=1):
+        msg += f"{i}. {p['username']}: {p['score']} win{'s' if p['score'] != 1 else ''}\n"
+    await ctx.send(msg)
 
 @bot.command()
 async def leaderboard_damage(ctx):
-    if not damage_data:
-        await ctx.send("Nu exista damage inregistrat!")
-        return
-    
-    damage_per_match = {}
-    for username, damage in damage_data.items():
-        match_count = player_match_count_data.get(username, 1)  # Default la 1 dacă nu există date
-        damage_per_match[username] = damage / match_count
+    guild_id = ctx.guild.id
+    players = list(players_col.find({"guild_id": guild_id}))
 
-    sorted_damages = sorted(damage_per_match.items(), key=lambda x: x[1], reverse=True)
-    
-    leaderboard_text = "🏆 **Leaderboard PUBG Damages** 🏆\n"
-    
-    for rank, (username, damage) in enumerate(sorted_damages, start=1):
-        match_count = player_match_count_data.get(username, 1)
-        leaderboard_text += f"{rank}. {username}: {damage:.2f} damage\n"
-    
-    await ctx.send(leaderboard_text)
+    if not players:
+        await ctx.send("Nu există date.")
+        return
+
+    sorted_damages = sorted(players, key=lambda p: (p["damage"] / max(1, p["matchCount"])), reverse=True)
+    msg = "🏆 **Leaderboard PUBG Damage/Match** 🏆\n"
+    for i, p in enumerate(sorted_damages[:10], start=1):
+        dmg = p["damage"] / max(1, p["matchCount"])
+        msg += f"{i}. {p['username']}: {dmg:.2f} damage/match\n"
+    await ctx.send(msg)
 
 @bot.command()
 async def leaderboard_kills(ctx):
-    if not kills_data:
-        await ctx.send("Nu există kills înregistrate!")
-        return
-    
-    sorted_kills = sorted(kills_data.items(), key=lambda x: x[1], reverse=True)
-    
-    leaderboard_text = "🏆 **Leaderboard PUBG Kills** 🏆\n"
-    
-    for rank, (username, kills) in enumerate(sorted_kills, start=1):
-        leaderboard_text += f"{rank}. {username}: {kills} {'kill' if kills == 1 else 'kills'}\n"
-    
-    await ctx.send(leaderboard_text)
+    guild_id = ctx.guild.id
+    top = list(players_col.find({"guild_id": guild_id}).sort("kills", -1).limit(10))
 
+    msg = "🏆 **Leaderboard PUBG Kills** 🏆\n"
+    for i, p in enumerate(top, start=1):
+        msg += f"{i}. {p['username']}: {p['kills']} kills\n"
+    await ctx.send(msg)
 
 @bot.command()
 async def leaderboard_sniper(ctx):
-    if not longest_kill_data:
-        await ctx.send("Nu există încă longest kill-uri înregistrate.")
-        return
-    
-    sorted_snipers = sorted(longest_kill_data.items(), key=lambda x: x[1], reverse=True)
-    
-    leaderboard_text = "🏆 **Leaderboard SniperMan** 🏆\n"
-    
-    for rank, (username, distance) in enumerate(sorted_snipers, start=1):
-        leaderboard_text += f"{rank}. {username}: {distance} metri\n"
-    
-    await ctx.send(leaderboard_text)
+    guild_id = ctx.guild.id
+    top = list(players_col.find({"guild_id": guild_id}).sort("longestKill", -1).limit(10))
 
+    msg = "🏆 **Leaderboard SniperMan** 🏆\n"
+    for i, p in enumerate(top, start=1):
+        msg += f"{i}. {p['username']}: {p['longestKill']} m\n"
+    await ctx.send(msg)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def add_user(ctx, pubg_name):
+    clean_name = pubg_name.strip()
+    existing = players_col.find_one({
+        "username": {"$regex": f"^{pubg_name}$", "$options": "i"},
+        "guild_id": ctx.guild.id
+    })
+    if existing:
+        await ctx.send(f"❗ Player `{pubg_name}` is already registered.")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {PUBG_API_KEY}",
+        "Accept": "application/vnd.api+json"
+    }
+
+    url = f"https://api.pubg.com/shards/steam/players?filter[playerNames]={pubg_name.strip()}"
+    response = await safe_request(url, headers)
+
+    if response.status_code == 429:
+        await ctx.send("⚠️ You have been temporarily blocked by the PUBG API (429 Too Many Requests). Please try again in a few seconds.")
+        return
+
+    if response.status_code != 200:
+        await ctx.send(f"❌ Error API PUBG ({response.status_code}): {response.text}")
+        return
+
+    data = response.json().get("data")
+    if not data:
+        await ctx.send(f"❌ Player not found `{pubg_name}`.")
+        return
+
+    account_id = data[0]["id"]
+    players_col.insert_one({
+        "username": clean_name,
+        "accountId": account_id,
+        "damage": 0,
+        "kills": 0,
+        "score": 0,
+        "matchCount": 0,
+        "longestKill": 0,
+        "guild_id": ctx.guild.id
+    })
+
+    await ctx.send(f"✅ Player **{pubg_name}** has been added to the leaderboard!")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def remove_user(ctx, pubg_name):
+    regex_filter = {"$regex": f"^{pubg_name}$", "$options": "i"}
+    result = players_col.delete_many({"username": regex_filter, "guild_id": ctx.guild.id})
+    if result.deleted_count == 0:
+        await ctx.send(f"❗ Player `{pubg_name}` not found.")
+    else:
+        await ctx.send(f"🗑️ I deleted {result.deleted_count} entries for")
 
 @bot.event
 async def on_ready():
     print(f"{bot.user} s-a conectat cu succes!")
-    check_for_wins.start()
+    if not check_for_wins.is_running():
+        check_for_wins.start()
 
 bot.run(TOKEN)
