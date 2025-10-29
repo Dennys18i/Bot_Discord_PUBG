@@ -22,7 +22,7 @@ sleep_time = 30
 # Discord intents
 intents = discord.Intents.default()
 intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # MongoDB setup
 try:
@@ -110,7 +110,7 @@ async def get_player_info(player_id):
 
         print(f"Mod detectat pentru {player_id}: gameMode = {game_mode}, matchType = {match_type}")
 
-        if game_mode in ["arcade", "lab", "war", "bluebomb", "esportsmode", "gunplay_ibr", "ibr", "tdm", "tutorialatoz"] or match_type in ["custom", "tutorialatoz"]:
+        if game_mode in ["arcade", "skbd", "lab", "war", "bluebomb", "esportsmode", "gunplay_ibr", "ibr", "tdm", "tutorialatoz", "slbmiramar-fpp"] or match_type in ["custom", "event", "tutorialatoz", "airoyale"]:
             return None
 
         filtered_player = filter_by_id(match_data["included"], player_id)
@@ -141,73 +141,210 @@ async def check_for_wins():
         damage = stats["damageDealt"]
         kills = stats["kills"]
         longest_kill = stats["longestKill"]
+        assists = stats.get("assists", 0)
+        max_damage = player.get("maxDamage", 0)
+        if damage > max_damage:
+            players_col.update_one({"username": username}, {"$set": {"maxDamage": damage}})
 
         update_data = {
             "$inc": {
                 "damage": int(damage),
                 "kills": int(kills),
+                "assists": int(assists),
                 "matchCount": 1,
                 "score": 1 if win_place == 1 else 0
             }
         }
+        if damage > player.get("maxSingleMatchDamage", 0):
+            players_col.update_one(
+                {"username": username},
+                {"$set": {"maxSingleMatchDamage": damage}}
+            )
         players_col.update_one({"username": username}, update_data)
         bot.loop.create_task(save_longest_kill(username, longest_kill))
 
         if win_place == 1:
-            await channel.send(f"@everyone 🏆 {username} has won a match! Congratulations! 🎉")
+            embed = discord.Embed(
+                title="🏆 Winner Winner Chicken Dinner!",
+                description=f"**{username}** has won a PUBG match! 🎉",
+                color=discord.Color.blue()
+            )
+
+            embed.add_field(name="🎯 Placement", value=f"#1", inline=True)
+            embed.add_field(name="🔫 Kills", value=str(kills), inline=True)
+            embed.add_field(name="💥 Damage Dealt", value=f"{damage:.1f}", inline=True)
+            embed.add_field(name="📏 Longest Kill", value=f"{longest_kill:.1f} meters", inline=True)
+
+            embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+
+            await channel.send("@everyone", embed=embed) 
 
         print(f"📊 {username} finished on the spot {win_place}, {kills} kills, {damage} damage")
         await asyncio.sleep(sleep_time)
 
 @bot.command()
-async def leaderboard(ctx):
+async def wins(ctx):
     guild_id = ctx.guild.id
     top = list(players_col.find({"guild_id": guild_id}).sort("score", -1).limit(10))
 
     if not top:
-        await ctx.send("There is no data")
+        await ctx.send("There is no data.")
         return
 
-    msg = "🏆 **Leaderboard PUBG Wins** 🏆\n"
+    embed = discord.Embed(
+        title="🏆 Leaderboard - Wins",
+        description="Top players ranked by number of wins",
+        color=discord.Color.blue()
+    )
+
     for i, p in enumerate(top, start=1):
-        msg += f"{i}. {p['username']}: {p['score']} win{'s' if p['score'] != 1 else ''}\n"
-    await ctx.send(msg)
+        embed.add_field(
+            name=f"{i}. {p['username']}",
+            value=f"{p['score']} win{'s' if p['score'] != 1 else ''}",
+            inline=False
+        )
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+    await ctx.send(embed=embed)
 
 @bot.command()
-async def leaderboard_damage(ctx):
+async def damage(ctx):
     guild_id = ctx.guild.id
     players = list(players_col.find({"guild_id": guild_id}))
 
     if not players:
-        await ctx.send("Nu există date.")
+        await ctx.send("No data available.")
         return
 
     sorted_damages = sorted(players, key=lambda p: (p["damage"] / max(1, p["matchCount"])), reverse=True)
-    msg = "🏆 **Leaderboard PUBG Damage/Match** 🏆\n"
+
+    embed = discord.Embed(
+        title="🔥 Leaderboard - Average Damage per Match",
+        description="Top players based on damage dealt per match",
+        color=discord.Color.blue()
+    )
+
     for i, p in enumerate(sorted_damages[:10], start=1):
         dmg = p["damage"] / max(1, p["matchCount"])
-        msg += f"{i}. {p['username']}: {dmg:.2f} damage/match\n"
-    await ctx.send(msg)
+        embed.add_field(
+            name=f"{i}. {p['username']}",
+            value=f"{dmg:.2f} damage/match",
+            inline=False
+        )
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+    await ctx.send(embed=embed)
 
 @bot.command()
-async def leaderboard_kills(ctx):
+async def kills(ctx):
     guild_id = ctx.guild.id
     top = list(players_col.find({"guild_id": guild_id}).sort("kills", -1).limit(10))
 
-    msg = "🏆 **Leaderboard PUBG Kills** 🏆\n"
+    if not top:
+        await ctx.send("No data available.")
+        return
+
+    embed = discord.Embed(
+        title="🔫 Leaderboard - Kills",
+        description="Top players ranked by total kills",
+        color=discord.Color.blue()
+    )
+
     for i, p in enumerate(top, start=1):
-        msg += f"{i}. {p['username']}: {p['kills']} kills\n"
-    await ctx.send(msg)
+        embed.add_field(
+            name=f"{i}. {p['username']}",
+            value=f"{p['kills']} kills",
+            inline=False
+        )
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+    await ctx.send(embed=embed)
+
 
 @bot.command()
-async def leaderboard_sniper(ctx):
+async def sniper(ctx):
     guild_id = ctx.guild.id
     top = list(players_col.find({"guild_id": guild_id}).sort("longestKill", -1).limit(10))
 
-    msg = "🏆 **Leaderboard SniperMan** 🏆\n"
+    if not top:
+        await ctx.send("No data available.")
+        return
+
+    embed = discord.Embed(
+        title="🎯 Leaderboard - Longest Kill Shots",
+        description="Top sniper kills (longest distance)",
+        color=discord.Color.blue()
+    )
+
     for i, p in enumerate(top, start=1):
-        msg += f"{i}. {p['username']}: {p['longestKill']} m\n"
-    await ctx.send(msg)
+        embed.add_field(
+            name=f"{i}. {p['username']}",
+            value=f"{p['longestKill']} meters",
+            inline=False
+        )
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def maxdamage(ctx):
+    guild_id = ctx.guild.id
+    top = list(players_col.find({"guild_id": guild_id}).sort("maxSingleMatchDamage", -1).limit(10))
+
+    if not top:
+        await ctx.send("No data available.")
+        return
+
+    embed = discord.Embed(
+        title="💥 Most Damage in a Single Match",
+        description="Top players by highest single-match damage",
+        color=discord.Color.blue()
+    )
+
+    for i, p in enumerate(top, start=1):
+        embed.add_field(
+            name=f"{i}. {p['username']}",
+            value=f"{p.get('maxSingleMatchDamage', 0):.1f} damage",
+            inline=False
+        )
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def kda(ctx):
+    guild_id = ctx.guild.id
+    players = list(players_col.find({"guild_id": guild_id}))
+
+    if not players:
+        await ctx.send("No data available.")
+        return
+
+    sorted_kda = sorted(
+        players,
+        key=lambda p: ((p.get("kills", 0) + p.get("assists", 0)) / max(1, p.get("matchCount", 1))),
+        reverse=True
+    )
+
+    embed = discord.Embed(
+        title="📈 Leaderboard - KDA",
+        description="Top players based on KDA = (Kills + Assists) / Matches",
+        color=discord.Color.blue()
+    )
+
+    for i, p in enumerate(sorted_kda[:10], start=1):
+        k = p.get("kills", 0)
+        a = p.get("assists", 0)
+        m = max(1, p.get("matchCount", 1))
+        kda_val = (k + a) / m
+        embed.add_field(
+            name=f"{i}. {p['username']}",
+            value=f"{kda_val:.2f}",
+            inline=False
+        )
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+    await ctx.send(embed=embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -248,6 +385,8 @@ async def add_user(ctx, pubg_name):
         "accountId": account_id,
         "damage": 0,
         "kills": 0,
+        "assists": 0,
+        "maxDamage": 0,
         "score": 0,
         "matchCount": 0,
         "longestKill": 0,
@@ -266,6 +405,137 @@ async def remove_user(ctx, pubg_name):
     else:
         await ctx.send(f"🗑️ I deleted {result.deleted_count} entries for")
 
+@bot.command()
+async def help(ctx):
+    embed = discord.Embed(
+        title="📘 PUBG Bot - Command Guide",
+        description="Here are all the available commands you can use:",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="🎯 Player Stats",
+        value=(
+            "`!wins`               - Displays the leaderboard for wins\n"
+            "`!kills`              - Displays the leaderboard for kills\n"
+            "`!damage`             - Displays the leaderboard for average damage per match\n"
+            "`!sniper`             - Displays the leaderboard for longest kill shots\n"
+            "`!maxdamage`          - Displays the leaderboard for highest damage in a single match\n"
+            "`!kda`                - Displays the leaderboard based on KDA\n"
+            "`!profile <PUBGName>` - Displays your stats or another player's profile"
+
+        ),
+        inline=False
+    )
+
+    embed.add_field(
+        name="⚙️ Admin Commands",
+        value=(
+            "`!add_user <PUBGName>`     - Add a player to the leaderboard\n"
+            "`!remove_user <PUBGName>`  - Remove a player from the leaderboard\n"
+            "`!reset <fields>`          - Reset selected stats for all players (e.g. !reset all or !reset kills,damage)"
+
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks • Made for PUBG players")
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def reset(ctx, fields: str):
+    guild_id = ctx.guild.id
+
+    valid_fields = {
+        "damage": "damage",
+        "kills": "kills",
+        "score": "score",
+        "matchcount": "matchCount"
+    }
+
+    fields_input = fields.strip().lower()
+
+    if fields_input == "all":
+        to_reset = list(valid_fields.values())
+    else:
+        requested = set(f.strip().lower() for f in fields.split(","))
+        invalid = requested - set(valid_fields.keys())
+
+        if invalid:
+            await ctx.send(
+                f"❌ Invalid fields: {', '.join(invalid)}\n✅ Valid options: {', '.join(valid_fields.keys())}"
+            )
+            return
+
+        to_reset = [valid_fields[f] for f in requested]
+
+    update = {"$set": {key: 0 for key in to_reset}}
+    result = players_col.update_many({"guild_id": guild_id}, update)
+
+    await ctx.send(f"✅ Reset `{', '.join(to_reset)}` for {result.modified_count} players.")
+
+@bot.command()
+async def profile(ctx, player_name: str = None):
+    guild_id = ctx.guild.id
+    query_name = player_name or ctx.author.name
+
+    player = players_col.find_one({
+        "username": {"$regex": f"^{query_name}$", "$options": "i"},
+        "guild_id": guild_id
+    })
+
+    if not player:
+        await ctx.send(f"❌ Player `{query_name}` not found in leaderboard.")
+        return
+
+    match_count = max(1, player.get("matchCount", 0)) 
+    avg_damage = player.get("damage", 0) / match_count
+
+    embed = discord.Embed(
+        title=f"📊 PUBG Profile: {player['username']}",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(name="🏆 Wins", value=player.get("score", 0), inline=True)
+    embed.add_field(name="🔫 Kills", value=player.get("kills", 0), inline=True)
+    embed.add_field(name="💥 Avg. Damage", value=f"{avg_damage:.2f}", inline=True)
+    embed.add_field(name="💣 Max Damage", value=f"{player.get('maxDamage', 0):.1f}", inline=True)
+    embed.add_field(name="🧠 Assists", value=player.get("assists", 0), inline=True)
+    embed.add_field(name="📏 Longest Kill", value=f"{player.get('longestKill', 0)} m", inline=True)
+    embed.add_field(name="🎮 Matches Played", value=player.get("matchCount", 0), inline=True)
+
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks")
+    embed.timestamp = discord.utils.utcnow()
+
+    await ctx.send(embed=embed)
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def announce_season2(ctx):
+    channel = bot.get_channel(CHANNEL_ID)
+    if not channel:
+        await ctx.send("❌ Announcement channel not found.")
+        return
+
+    embed = discord.Embed(
+        title="🎉 Season 2 Has Started!",
+        description=(
+            "A new competitive season has officially begun! 🏆\n\n"
+            "**The following stats have been reset for everyone:**\n"
+            "- 🏆 Wins\n"
+            "- 🔫 Kills\n"
+            "- 💥 Damage\n"
+            "- 🎮 Matches Played\n\n"
+            "Good luck to all players in Season 2! 🔁 It's a fresh start!"
+        ),
+        color=discord.Color.purple()
+    )
+    embed.set_footer(text="PUBG Discord Bot by ClashRanks")
+    embed.timestamp = discord.utils.utcnow()
+
+    await channel.send("@everyone", embed=embed)   
 @bot.event
 async def on_ready():
     print(f"{bot.user} s-a conectat cu succes!")
